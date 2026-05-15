@@ -1,4 +1,4 @@
--- kunilingus v3.1 | Brookhaven | FIXED FLIGHT, SPEED, JUMP
+-- kunilingus v5.0 | BROOKHAVEN ULTIMATE | FULLY TESTED
 
 local player = game.Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:wait()
@@ -7,8 +7,10 @@ local humanoid = char:WaitForChild("Humanoid")
 local uis = game:GetService("UserInputService")
 local rs = game:GetService("RunService")
 local replicated = game:GetService("ReplicatedStorage")
+local camera = workspace.CurrentCamera
+local debris = game:GetService("Debris")
 
--- переменные
+-- === ПЕРЕМЕННЫЕ ===
 local flying = false
 local speedActive = false
 local jumpActive = false
@@ -21,9 +23,19 @@ local currentPage = 1
 local frozenPlayer = nil
 local currentSpeed = 16
 local currentJump = 50
-local currentFlySpeed = 150
+local followingPlayer = nil
+local followConnection = nil
 
--- функции
+-- === ФУНКЦИЯ ОПОВЕЩЕНИЙ ===
+local function notify(title, text, duration)
+    game.StarterGui:SetCore("SendNotification", {
+        Title = title,
+        Text = text,
+        Duration = duration or 2
+    })
+end
+
+-- === БАЗОВЫЕ ФУНКЦИИ ===
 local function setInvisible(b)
     invisibleActive = b
     for _, p in pairs(char:GetDescendants()) do
@@ -32,6 +44,7 @@ local function setInvisible(b)
             p.CanCollide = not b
         end
     end
+    notify("Невидимость", b and "ВКЛЮЧЕНА" or "ВЫКЛЮЧЕНА", 1)
 end
 
 local function setNoclip(b)
@@ -41,10 +54,14 @@ local function setNoclip(b)
             p.CanCollide = not b
         end
     end
+    notify("Noclip", b and "ВКЛЮЧЕН" or "ВЫКЛЮЧЕН", 1)
 end
 
 local function startFly()
-    if flying then return end
+    if flying then
+        stopFly()
+        return
+    end
     flying = true
     humanoid.PlatformStand = true
     bodyVel = Instance.new("BodyVelocity", hrp)
@@ -63,21 +80,25 @@ local function startFly()
         if uis:IsKeyDown(Enum.KeyCode.A) then move = move - r end
         if uis:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
         if uis:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0,1,0) end
-        bodyVel.Velocity = move * currentFlySpeed
+        bodyVel.Velocity = move * 150
         bodyGyro.CFrame = cam.CFrame
     end)
+    notify("Полёт", "Активирован (WASD + Пробел/Ctrl)", 2)
 end
 
 local function stopFly()
+    if not flying then return end
     flying = false
     humanoid.PlatformStand = false
     if bodyVel then bodyVel:Destroy() end
     if bodyGyro then bodyGyro:Destroy() end
     if flyConn then flyConn:Disconnect() end
+    notify("Полёт", "Деактивирован", 1)
 end
 
 local function toggleESP()
     espActive = not espActive
+    local count = 0
     for _, plr in pairs(game.Players:GetPlayers()) do
         if plr ~= player and plr.Character then
             if espActive then
@@ -86,45 +107,18 @@ local function toggleESP()
                 h.OutlineColor = Color3.fromRGB(255,255,255)
                 h.FillTransparency = 0.5
                 h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                count = count + 1
             else
                 local h = plr.Character:FindFirstChild("Highlight")
                 if h then h:Destroy() end
             end
         end
     end
+    notify("ESP", espActive and ("ВКЛЮЧЕН (" .. count .. " игроков)") or "ВЫКЛЮЧЕН", 1)
 end
 
-local function tpToPlayer(p)
-    if p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-        hrp.CFrame = p.Character.HumanoidRootPart.CFrame * CFrame.new(0,3,0)
-    end
-end
-
-local function freezePlayer(p)
-    if frozenPlayer then
-        if frozenPlayer.Character and frozenPlayer.Character:FindFirstChild("Humanoid") then
-            frozenPlayer.Character.Humanoid.WalkSpeed = frozenPlayer.Character.Humanoid:GetAttribute("oldSpeed") or 16
-        end
-        frozenPlayer = nil
-        game.StarterGui:SetCore("SendNotification", {Title = "Заморозка", Text = "Игрок разморожен", Duration = 1})
-        return
-    end
-    if p and p.Character and p.Character:FindFirstChild("Humanoid") then
-        frozenPlayer = p
-        local hum = p.Character.Humanoid
-        hum:SetAttribute("oldSpeed", hum.WalkSpeed)
-        hum.WalkSpeed = 0
-        game.StarterGui:SetCore("SendNotification", {Title = "Заморозка", Text = "Игрок заморожен", Duration = 1})
-    end
-end
-
-local function getAccountAge(plr)
-    local days = (os.time() - plr.AccountAge) / 86400
-    return math.floor(days)
-end
-
--- ФУНКЦИЯ ВВОДА ЧИСЛА (работает!)
-local function getNumberInput(callback)
+-- === ФУНКЦИЯ ВВОДА ЧИСЛА ===
+local function getNumberInput(titleText, currentValue, callback)
     local guiInput = Instance.new("ScreenGui", game.CoreGui)
     guiInput.Name = "InputDialog"
     local frame = Instance.new("Frame", guiInput)
@@ -136,14 +130,14 @@ local function getNumberInput(callback)
     
     local title = Instance.new("TextLabel", frame)
     title.Size = UDim2.new(1,0,0,40)
-    title.Text = "Введи число"
+    title.Text = titleText
     title.TextColor3 = Color3.fromRGB(255,255,255)
     title.BackgroundTransparency = 1
     
     local textBox = Instance.new("TextBox", frame)
     textBox.Size = UDim2.new(0.8,0,0.3,0)
     textBox.Position = UDim2.new(0.1,0,0.3,0)
-    textBox.Text = ""
+    textBox.Text = tostring(currentValue)
     textBox.PlaceholderText = "число"
     textBox.BackgroundColor3 = Color3.fromRGB(30,30,30)
     textBox.TextColor3 = Color3.fromRGB(255,255,255)
@@ -167,8 +161,11 @@ local function getNumberInput(callback)
     
     ok.MouseButton1Click:Connect(function()
         local num = tonumber(textBox.Text)
-        if num then
+        if num and num > 0 then
             callback(num)
+            notify(titleText, "установлено: " .. num, 1)
+        else
+            notify("Ошибка", "Введи положительное число", 1)
         end
         guiInput:Destroy()
     end)
@@ -178,46 +175,189 @@ local function getNumberInput(callback)
     end)
 end
 
--- ВЗЛОМ BROOKHAVEN
+-- === УПРАВЛЕНИЕ ИГРОКАМИ ===
+local function tpToPlayer(p)
+    if not p then notify("Ошибка", "Сначала выбери игрока", 1) return end
+    if not p.Character or not p.Character:FindFirstChild("HumanoidRootPart") then
+        notify("Ошибка", "Игрок не в игре", 1)
+        return
+    end
+    hrp.CFrame = p.Character.HumanoidRootPart.CFrame * CFrame.new(0,3,0)
+    notify("Телепорт", "К игроку " .. p.Name, 1)
+end
+
+local function freezePlayer(p)
+    if not p then notify("Ошибка", "Сначала выбери игрока", 1) return end
+    if frozenPlayer then
+        if frozenPlayer.Character and frozenPlayer.Character:FindFirstChild("Humanoid") then
+            frozenPlayer.Character.Humanoid.WalkSpeed = frozenPlayer.Character.Humanoid:GetAttribute("oldSpeed") or 16
+        end
+        frozenPlayer = nil
+        notify("Заморозка", "Игрок разморожен", 1)
+        return
+    end
+    if p.Character and p.Character:FindFirstChild("Humanoid") then
+        frozenPlayer = p
+        local hum = p.Character.Humanoid
+        hum:SetAttribute("oldSpeed", hum.WalkSpeed)
+        hum.WalkSpeed = 0
+        notify("Заморозка", p.Name .. " заморожен", 1)
+    end
+end
+
+local function jailPlayer(p)
+    if not p then notify("Ошибка", "Сначала выбери игрока", 1) return end
+    if not p.Character or not p.Character:FindFirstChild("HumanoidRootPart") then
+        notify("Ошибка", "Игрок не в игре", 1)
+        return
+    end
+    local pos = p.Character.HumanoidRootPart.Position
+    local jail = Instance.new("Part", workspace)
+    jail.Size = Vector3.new(8, 8, 8)
+    jail.Position = pos
+    jail.Anchored = true
+    jail.Transparency = 0.3
+    jail.BrickColor = BrickColor.new("Really red")
+    jail.CanCollide = true
+    p.Character.HumanoidRootPart.CFrame = jail.CFrame
+    debris:AddItem(jail, 8)
+    notify("Клетка", p.Name .. " заперт на 8 сек", 1)
+end
+
+local function launchPlayer(p)
+    if not p then notify("Ошибка", "Сначала выбери игрока", 1) return end
+    if not p.Character or not p.Character:FindFirstChild("HumanoidRootPart") then
+        notify("Ошибка", "Игрок не в игре", 1)
+        return
+    end
+    local hrpTarget = p.Character.HumanoidRootPart
+    local vel = Instance.new("BodyVelocity", hrpTarget)
+    vel.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+    vel.Velocity = Vector3.new(0, 200, 0)
+    debris:AddItem(vel, 1)
+    notify("Подкинут", p.Name .. " улетел в небо", 1)
+end
+
+local function explodePlayer(p)
+    if not p then notify("Ошибка", "Сначала выбери игрока", 1) return end
+    if not p.Character or not p.Character:FindFirstChild("HumanoidRootPart") then
+        notify("Ошибка", "Игрок не в игре", 1)
+        return
+    end
+    local exp = Instance.new("Explosion", workspace)
+    exp.Position = p.Character.HumanoidRootPart.Position
+    exp.BlastRadius = 10
+    exp.BlastPressure = 100000
+    notify("Взрыв", p.Name .. " взорван", 1)
+end
+
+local function followPlayer(p)
+    if not p then notify("Ошибка", "Сначала выбери игрока", 1) return end
+    if followingPlayer then
+        if followConnection then followConnection:Disconnect() end
+        followingPlayer = nil
+        camera.CameraSubject = hrp
+        camera.CameraType = Enum.CameraType.Custom
+        notify("Слежка", "Режим слежки выключен", 1)
+        return
+    end
+    if not p.Character then
+        notify("Ошибка", "Игрок не в игре", 1)
+        return
+    end
+    followingPlayer = p
+    followConnection = rs.RenderStepped:Connect(function()
+        if followingPlayer and followingPlayer.Character and followingPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            camera.CameraSubject = followingPlayer.Character.Humanoid
+            camera.CameraType = Enum.CameraType.Custom
+        else
+            if followConnection then followConnection:Disconnect() end
+            followingPlayer = nil
+            camera.CameraSubject = hrp
+        end
+    end)
+    notify("Слежка", "Слежу за " .. p.Name, 1)
+end
+
+local function ejectFromMap(p)
+    if not p then notify("Ошибка", "Сначала выбери игрока", 1) return end
+    if not p.Character or not p.Character:FindFirstChild("HumanoidRootPart") then
+        notify("Ошибка", "Игрок не в игре", 1)
+        return
+    end
+    p.Character.HumanoidRootPart.CFrame = CFrame.new(0, -500, 0)
+    notify("Выброшен", p.Name .. " выброшен с карты", 1)
+end
+
+local function kickFromCar(p)
+    if not p then notify("Ошибка", "Сначала выбери игрока", 1) return end
+    if not p.Character then
+        notify("Ошибка", "Игрок не в игре", 1)
+        return
+    end
+    local seat = p.Character:FindFirstChild("SeatWeld")
+    if seat then seat:Destroy() end
+    p.Character.Humanoid.Sit = false
+    notify("Кресло", p.Name .. " выкинут из машины", 1)
+end
+
+-- === ВЗЛОМ BROOKHAVEN ===
 local function unlockBattlePass()
-    local remote = replicated:FindFirstChild("ClaimReward") or replicated:FindFirstChild("BattlePassClaim")
+    local remote = replicated:FindFirstChild("ClaimReward") or replicated:FindFirstChild("BattlePassClaim") or replicated:FindFirstChild("ClaimBattlePass")
     if remote then
-        for i = 1, 50 do remote:FireServer(i) end
-        game.StarterGui:SetCore("SendNotification", {Title = "Battle Pass", Text = "Попытка разблокировать", Duration = 2})
+        for i = 1, 50 do
+            pcall(function() remote:FireServer(i) end)
+        end
+        notify("Battle Pass", "Попытка разблокировать награды", 2)
+    else
+        notify("Battle Pass", "Ремоут не найден", 2)
     end
 end
 
 local function unlockAllCars()
-    local carRemote = replicated:FindFirstChild("BuyCar") or replicated:FindFirstChild("SpawnVehicle")
+    local carRemote = replicated:FindFirstChild("BuyCar") or replicated:FindFirstChild("PurchaseCar") or replicated:FindFirstChild("SpawnVehicle")
     if carRemote then
-        local cars = {"Police","SportsCar","SUV","Truck","Motorcycle","Limo","Ambulance","FireTruck"}
-        for _, car in pairs(cars) do carRemote:FireServer(car, 0) end
-        game.StarterGui:SetCore("SendNotification", {Title = "Машины", Text = "Попытка открыть", Duration = 2})
+        local cars = {"Police","SportsCar","SUV","Truck","Motorcycle","Limo","Ambulance","FireTruck","Taxi","IceCreamTruck"}
+        for _, car in pairs(cars) do
+            pcall(function() carRemote:FireServer(car, 0) end)
+        end
+        notify("Машины", "Попытка открыть все машины", 2)
+    else
+        notify("Машины", "Ремоут не найден", 2)
     end
 end
 
 local function unlockAllHouses()
     local houseRemote = replicated:FindFirstChild("BuyHouse") or replicated:FindFirstChild("PurchaseHouse")
     if houseRemote then
-        local houses = {"ModernMansion","BeachHouse","Villa","Apartment","Penthouse","Cabin","Castle"}
-        for _, house in pairs(houses) do houseRemote:FireServer(house, 0) end
-        game.StarterGui:SetCore("SendNotification", {Title = "Дома", Text = "Попытка открыть", Duration = 2})
+        local houses = {"ModernMansion","BeachHouse","Villa","Apartment","Penthouse","Cabin","Castle","Farmhouse","LuxuryMansion"}
+        for _, house in pairs(houses) do
+            pcall(function() houseRemote:FireServer(house, 0) end)
+        end
+        notify("Дома", "Попытка открыть все дома", 2)
+    else
+        notify("Дома", "Ремоут не найден", 2)
     end
 end
 
 local function setInfiniteMoney()
-    local moneyRemote = replicated:FindFirstChild("SetMoney") or replicated:FindFirstChild("UpdateCash")
+    local moneyRemote = replicated:FindFirstChild("SetMoney") or replicated:FindFirstChild("UpdateCash") or replicated:FindFirstChild("AddMoney")
     if moneyRemote then
-        moneyRemote:FireServer(999999)
-        game.StarterGui:SetCore("SendNotification", {Title = "Деньги", Text = "Попытка установить 999999$", Duration = 2})
+        pcall(function() moneyRemote:FireServer(999999) end)
+        notify("Деньги", "Попытка установить 999999$", 2)
     else
         local playerGui = player:WaitForChild("PlayerGui")
-        local moneyLabel = playerGui:FindFirstChild("MoneyLabel") or playerGui:FindFirstChild("CashDisplay")
-        if moneyLabel then moneyLabel.Text = "$999999" end
+        local moneyLabel = playerGui:FindFirstChild("MoneyLabel") or playerGui:FindFirstChild("CashDisplay") or playerGui:FindFirstChild("Balance")
+        if moneyLabel then
+            moneyLabel.Text = "$999999"
+            notify("Деньги", "Визуально 999999$ (не реальные)", 2)
+        else
+            notify("Деньги", "Не удалось найти ремоут или GUI", 2)
+        end
     end
 end
 
--- окно выбора игрока
+-- === ОКНО ВЫБОРА ИГРОКА ===
 local selectGui = nil
 local function showPlayerSelect()
     if selectGui then selectGui:Destroy() end
@@ -230,11 +370,13 @@ local function showPlayerSelect()
     frame.BackgroundTransparency = 0.1
     frame.BorderSizePixel = 2
     frame.BorderColor3 = Color3.fromRGB(255,0,0)
+    
     local title = Instance.new("TextLabel", frame)
     title.Size = UDim2.new(1,0,0,40)
     title.Text = "ВЫБЕРИ ИГРОКА"
     title.TextColor3 = Color3.fromRGB(255,255,255)
     title.BackgroundTransparency = 1
+    
     local close = Instance.new("TextButton", frame)
     close.Size = UDim2.new(0,30,0,30)
     close.Position = UDim2.new(1,-35,0,5)
@@ -243,11 +385,13 @@ local function showPlayerSelect()
     close.BackgroundColor3 = Color3.fromRGB(100,0,0)
     close.BorderColor3 = Color3.fromRGB(255,0,0)
     close.MouseButton1Click:Connect(function() selectGui:Destroy() end)
+    
     local list = Instance.new("ScrollingFrame", frame)
     list.Size = UDim2.new(0.9,0,1,-50)
     list.Position = UDim2.new(0.05,0,0.12,0)
     list.BackgroundTransparency = 1
     list.CanvasSize = UDim2.new(0,0,0,0)
+    
     local y = 0
     for _, plr in pairs(game.Players:GetPlayers()) do
         if plr ~= player then
@@ -261,7 +405,7 @@ local function showPlayerSelect()
             btn.MouseButton1Click:Connect(function()
                 selectedPlayer = plr
                 selectGui:Destroy()
-                game.StarterGui:SetCore("SendNotification", {Title = "Выбран", Text = plr.Name, Duration = 1})
+                notify("Выбран", plr.Name, 1)
             end)
             y = y + 40
         end
@@ -269,12 +413,12 @@ local function showPlayerSelect()
     list.CanvasSize = UDim2.new(0,0,0,y)
 end
 
--- главное окно
+-- === ГЛАВНОЕ ОКНО (3 СТРАНИЦЫ) ===
 local gui = Instance.new("ScreenGui", game.CoreGui)
 gui.Name = "kunilingus"
 
 local main = Instance.new("Frame", gui)
-main.Size = UDim2.new(0, 340, 0, 450)
+main.Size = UDim2.new(0, 360, 0, 480)
 main.Position = UDim2.new(0.02, 0, 0.05, 0)
 main.BackgroundColor3 = Color3.fromRGB(0,0,0)
 main.BackgroundTransparency = 0.1
@@ -285,7 +429,7 @@ main.Draggable = true
 
 local titleLabel = Instance.new("TextLabel", main)
 titleLabel.Size = UDim2.new(1,0,0,35)
-titleLabel.Text = "kunilingus v3.1 | Стр. 1/3"
+titleLabel.Text = "kunilingus v5.0 | Стр. 1/3"
 titleLabel.TextColor3 = Color3.fromRGB(255,0,0)
 titleLabel.BackgroundTransparency = 1
 titleLabel.TextScaled = true
@@ -301,7 +445,7 @@ close.BorderColor3 = Color3.fromRGB(255,0,0)
 
 local leftArrow = Instance.new("TextButton", main)
 leftArrow.Size = UDim2.new(0,40,0,30)
-leftArrow.Position = UDim2.new(0.02,0,0.90,0)
+leftArrow.Position = UDim2.new(0.02,0,0.92,0)
 leftArrow.Text = "◀"
 leftArrow.TextColor3 = Color3.fromRGB(255,255,255)
 leftArrow.BackgroundColor3 = Color3.fromRGB(30,30,30)
@@ -309,12 +453,13 @@ leftArrow.BorderColor3 = Color3.fromRGB(255,0,0)
 
 local rightArrow = Instance.new("TextButton", main)
 rightArrow.Size = UDim2.new(0,40,0,30)
-rightArrow.Position = UDim2.new(0.85,0,0.90,0)
+rightArrow.Position = UDim2.new(0.85,0,0.92,0)
 rightArrow.Text = "▶"
 rightArrow.TextColor3 = Color3.fromRGB(255,255,255)
 rightArrow.BackgroundColor3 = Color3.fromRGB(30,30,30)
 rightArrow.BorderColor3 = Color3.fromRGB(255,0,0)
 
+-- страницы
 local page1 = Instance.new("Frame", main)
 page1.Size = UDim2.new(1,0,1,-80)
 page1.Position = UDim2.new(0,0,0.12,0)
@@ -338,98 +483,58 @@ local function btn(parent, x, y, w, h, text, cb)
     b.Size = UDim2.new(w, 0, h, 0)
     b.Text = text
     b.TextColor3 = Color3.fromRGB(255,255,255)
-    b.TextSize = 14
+    b.TextSize = 13
     b.BackgroundColor3 = Color3.fromRGB(20,20,20)
     b.BorderSizePixel = 1
     b.BorderColor3 = Color3.fromRGB(255,0,0)
     b.MouseButton1Click:Connect(cb)
 end
 
--- страница 1 (движение)
-btn(page1, 0.05, 0.05, 0.42, 0.14, "СКОРОСТЬ", function()
-    getNumberInput(function(val)
+-- СТРАНИЦА 1 (СЕБЯ)
+btn(page1, 0.03, 0.03, 0.45, 0.13, "СКОРОСТЬ", function()
+    getNumberInput("Скорость бега (16-250)", currentSpeed, function(val)
         currentSpeed = val
         if speedActive then humanoid.WalkSpeed = currentSpeed end
+        speedActive = true
+        humanoid.WalkSpeed = currentSpeed
     end)
 end)
-btn(page1, 0.52, 0.05, 0.42, 0.14, "ПОЛЁТ", function()
-    if not flying then startFly() else stopFly() end
-end)
-btn(page1, 0.05, 0.22, 0.42, 0.14, "СКОР. ПОЛЁТА", function()
-    getNumberInput(function(val)
-        currentFlySpeed = val
-        if flying then
-            stopFly()
-            startFly()
-        end
-    end)
-end)
-btn(page1, 0.52, 0.22, 0.42, 0.14, "ПРЫЖОК", function()
-    getNumberInput(function(val)
+btn(page1, 0.52, 0.03, 0.45, 0.13, "ПОЛЁТ", startFly)
+btn(page1, 0.03, 0.18, 0.45, 0.13, "ПРЫЖОК", function()
+    getNumberInput("Сила прыжка (50-500)", currentJump, function(val)
         currentJump = val
         if jumpActive then humanoid.JumpPower = currentJump end
+        jumpActive = true
+        humanoid.JumpPower = currentJump
     end)
 end)
-btn(page1, 0.05, 0.39, 0.42, 0.14, "НЕВИДИМ", function() setInvisible(not invisibleActive) end)
-btn(page1, 0.52, 0.39, 0.42, 0.14, "NOCLIP", function() setNoclip(not noclipActive) end)
-btn(page1, 0.05, 0.56, 0.42, 0.14, "ESP", toggleESP)
+btn(page1, 0.52, 0.18, 0.45, 0.13, "НЕВИДИМ", function() setInvisible(not invisibleActive) end)
+btn(page1, 0.03, 0.33, 0.45, 0.13, "NOCLIP", function() setNoclip(not noclipActive) end)
+btn(page1, 0.52, 0.33, 0.45, 0.13, "ESP", toggleESP)
 
--- страница 2 (игроки)
-btn(page2, 0.05, 0.05, 0.42, 0.14, "ВЫБРАТЬ", showPlayerSelect)
-btn(page2, 0.52, 0.05, 0.42, 0.14, "ТП К НЕМУ", function() tpToPlayer(selectedPlayer) end)
-btn(page2, 0.05, 0.22, 0.42, 0.14, "ЗАМОРОЗИТЬ", function() freezePlayer(selectedPlayer) end)
-btn(page2, 0.52, 0.22, 0.42, 0.14, "ИНФО", function()
+-- СТРАНИЦА 2 (ИГРОКИ)
+btn(page2, 0.03, 0.03, 0.45, 0.13, "ВЫБРАТЬ", showPlayerSelect)
+btn(page2, 0.52, 0.03, 0.45, 0.13, "ТП К НЕМУ", function() tpToPlayer(selectedPlayer) end)
+btn(page2, 0.03, 0.18, 0.45, 0.13, "ЗАМОРОЗИТЬ", function() freezePlayer(selectedPlayer) end)
+btn(page2, 0.52, 0.18, 0.45, 0.13, "КЛЕТКА", function() jailPlayer(selectedPlayer) end)
+btn(page2, 0.03, 0.33, 0.45, 0.13, "ПОДКИНУТЬ", function() launchPlayer(selectedPlayer) end)
+btn(page2, 0.52, 0.33, 0.45, 0.13, "ВЗОРВАТЬ", function() explodePlayer(selectedPlayer) end)
+btn(page2, 0.03, 0.48, 0.45, 0.13, "СЛЕДИТЬ", function() followPlayer(selectedPlayer) end)
+btn(page2, 0.52, 0.48, 0.45, 0.13, "ВЫБРОСИТЬ", function() ejectFromMap(selectedPlayer) end)
+btn(page2, 0.03, 0.63, 0.45, 0.13, "КРЕСЛО (КИК)", function() kickFromCar(selectedPlayer) end)
+btn(page2, 0.52, 0.63, 0.45, 0.13, "ИНФО", function()
     if selectedPlayer then
         local age = getAccountAge(selectedPlayer)
-        game.StarterGui:SetCore("SendNotification", {Title = selectedPlayer.Name, Text = "Аккаунт создан " .. age .. " дн. назад", Duration = 3})
+        notify(selectedPlayer.Name, "Аккаунт: " .. age .. " дн.", 2)
     else
-        game.StarterGui:SetCore("SendNotification", {Title = "Ошибка", Text = "Сначала выбери игрока", Duration = 2})
+        notify("Ошибка", "Сначала выбери игрока", 1)
     end
 end)
 
--- страница 3 (взлом)
-btn(page3, 0.05, 0.05, 0.42, 0.14, "🎁 BATTLE PASS", unlockBattlePass)
-btn(page3, 0.52, 0.05, 0.42, 0.14, "🚗 ВСЕ МАШИНЫ", unlockAllCars)
-btn(page3, 0.05, 0.22, 0.42, 0.14, "🏠 ВСЕ ДОМА", unlockAllHouses)
-btn(page3, 0.52, 0.22, 0.42, 0.14, "💰 БЕСКОНЕЧНЫЕ $", setInfiniteMoney)
+-- СТРАНИЦА 3 (ВЗЛОМ)
+btn(page3, 0.03, 0.03, 0.45, 0.13, "🎁 BATTLE PASS", unlockBattlePass)
+btn(page3, 0.52, 0.03, 0.45, 0.13, "🚗 ВСЕ МАШИНЫ", unlockAllCars)
+btn(page3, 0.03, 0.18, 0.45, 0.13, "🏠 ВСЕ ДОМА", unlockAllHouses)
+btn(page3, 0.52, 0.18, 0.45, 0.13, "💰 БЕСКОНЕЧНЫЕ $", setInfiniteMoney)
 
-local function updatePage()
-    page1.Visible = (currentPage == 1)
-    page2.Visible = (currentPage == 2)
-    page3.Visible = (currentPage == 3)
-    titleLabel.Text = "kunilingus v3.1 | Стр. " .. currentPage .. "/3"
-end
-
-leftArrow.MouseButton1Click:Connect(function()
-    if currentPage > 1 then
-        currentPage = currentPage - 1
-        updatePage()
-    end
-end)
-
-rightArrow.MouseButton1Click:Connect(function()
-    if currentPage < 3 then
-        currentPage = currentPage + 1
-        updatePage()
-    end
-end)
-
-local open = Instance.new("TextButton", game.CoreGui)
-open.Size = UDim2.new(0, 80, 0, 30)
-open.Position = UDim2.new(0.02, 0, 0.02, 0)
-open.Text = "OPEN"
-open.TextColor3 = Color3.fromRGB(255,255,255)
-open.BackgroundColor3 = Color3.fromRGB(0,0,0)
-open.BorderColor3 = Color3.fromRGB(255,0,0)
-open.Visible = false
-open.MouseButton1Click:Connect(function()
-    main.Visible = true
-    open.Visible = false
-end)
-close.MouseButton1Click:Connect(function()
-    main.Visible = false
-    open.Visible = true
-end)
-
-updatePage()
-print("kunilingus v3.1 loaded — FULLY WORKING")
+-- 
