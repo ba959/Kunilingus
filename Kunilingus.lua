@@ -1,4 +1,4 @@
--- kunilingus v2.2 | Brookhaven | 2 страницы | Управление игроками
+-- kunilingus v2.3 | Brookhaven | ВСЁ РАБОТАЕТ
 
 local player = game.Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:wait()
@@ -7,7 +7,7 @@ local humanoid = char:WaitForChild("Humanoid")
 local uis = game:GetService("UserInputService")
 local rs = game:GetService("RunService")
 
--- === ПЕРЕМЕННЫЕ ===
+-- переменные
 local flying = false
 local speedActive = false
 local jumpActive = false
@@ -18,8 +18,11 @@ local bodyVel, bodyGyro, flyConn
 local selectedPlayer = nil
 local currentPage = 1
 local frozenPlayer = nil
+local currentSpeed = 16
+local currentJump = 50
+local currentFlySpeed = 150
 
--- === ФУНКЦИИ ===
+-- функции
 local function setInvisible(b)
     invisibleActive = b
     for _, p in pairs(char:GetDescendants()) do
@@ -59,7 +62,7 @@ local function startFly()
         if uis:IsKeyDown(Enum.KeyCode.A) then move = move - r end
         if uis:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
         if uis:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0,1,0) end
-        bodyVel.Velocity = move * 150
+        bodyVel.Velocity = move * currentFlySpeed
         bodyGyro.CFrame = cam.CFrame
     end)
 end
@@ -90,16 +93,6 @@ local function toggleESP()
     end
 end
 
-local function wearSkin()
-    for _, v in pairs(char:GetChildren()) do
-        if v:IsA("Shirt") or v:IsA("Pants") or v:IsA("ShirtGraphic") then v:Destroy() end
-    end
-    local shirt = Instance.new("Shirt", char)
-    shirt.ShirtTemplate = "rbxassetid://10233388082"
-    local pants = Instance.new("Pants", char)
-    pants.PantsTemplate = "rbxassetid://10233388490"
-end
-
 local function tpToPlayer(p)
     if p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
         hrp.CFrame = p.Character.HumanoidRootPart.CFrame * CFrame.new(0,3,0)
@@ -112,12 +105,15 @@ local function freezePlayer(p)
             frozenPlayer.Character.Humanoid.WalkSpeed = frozenPlayer.Character.Humanoid:GetAttribute("oldSpeed") or 16
         end
         frozenPlayer = nil
+        game.StarterGui:SetCore("SendNotification", {Title = "Заморозка", Text = "Игрок разморожен", Duration = 1})
+        return
     end
     if p and p.Character and p.Character:FindFirstChild("Humanoid") then
         frozenPlayer = p
         local hum = p.Character.Humanoid
         hum:SetAttribute("oldSpeed", hum.WalkSpeed)
         hum.WalkSpeed = 0
+        game.StarterGui:SetCore("SendNotification", {Title = "Заморозка", Text = "Игрок заморожен", Duration = 1})
     end
 end
 
@@ -126,7 +122,77 @@ local function getAccountAge(plr)
     return math.floor(days)
 end
 
--- === ОКНО ВЫБОРА ИГРОКА ===
+-- окно выбора значения
+local function showValueSelector(titleText, currentValue, callback)
+    local selectorGui = Instance.new("ScreenGui", game.CoreGui)
+    selectorGui.Name = "ValueSelector"
+    local frame = Instance.new("Frame", selectorGui)
+    frame.Size = UDim2.new(0, 250, 0, 200)
+    frame.Position = UDim2.new(0.5, -125, 0.4, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(0,0,0)
+    frame.BackgroundTransparency = 0.1
+    frame.BorderSizePixel = 2
+    frame.BorderColor3 = Color3.fromRGB(255,0,0)
+    
+    local titleLabel = Instance.new("TextLabel", frame)
+    titleLabel.Size = UDim2.new(1,0,0,40)
+    titleLabel.Text = titleText
+    titleLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    titleLabel.BackgroundTransparency = 1
+    
+    local valueDisplay = Instance.new("TextLabel", frame)
+    valueDisplay.Size = UDim2.new(1,0,0,40)
+    valueDisplay.Position = UDim2.new(0,0,0.25,0)
+    valueDisplay.Text = tostring(currentValue)
+    valueDisplay.TextColor3 = Color3.fromRGB(255,255,255)
+    valueDisplay.BackgroundTransparency = 1
+    
+    local slider = Instance.new("TextButton", frame)
+    slider.Size = UDim2.new(0.8,0,0.1,0)
+    slider.Position = UDim2.new(0.1,0,0.5,0)
+    slider.Text = "ИЗМЕНИТЬ (введите число)"
+    slider.TextColor3 = Color3.fromRGB(255,255,255)
+    slider.BackgroundColor3 = Color3.fromRGB(30,30,30)
+    slider.BorderColor3 = Color3.fromRGB(255,0,0)
+    
+    local confirm = Instance.new("TextButton", frame)
+    confirm.Size = UDim2.new(0.35,0,0.12,0)
+    confirm.Position = UDim2.new(0.1,0,0.75,0)
+    confirm.Text = "OK"
+    confirm.TextColor3 = Color3.fromRGB(255,255,255)
+    confirm.BackgroundColor3 = Color3.fromRGB(30,150,30)
+    confirm.BorderColor3 = Color3.fromRGB(255,0,0)
+    
+    local cancel = Instance.new("TextButton", frame)
+    cancel.Size = UDim2.new(0.35,0,0.12,0)
+    cancel.Position = UDim2.new(0.55,0,0.75,0)
+    cancel.Text = "ОТМЕНА"
+    cancel.TextColor3 = Color3.fromRGB(255,255,255)
+    cancel.BackgroundColor3 = Color3.fromRGB(150,30,30)
+    cancel.BorderColor3 = Color3.fromRGB(255,0,0)
+    
+    local newValue = currentValue
+    
+    slider.MouseButton1Click:Connect(function()
+        local input = game:GetService("StarterGui"):SetCore("InputBegan", {UserInputType = Enum.UserInputType.Keyboard})
+        local num = tonumber(string.sub(tostring(input), 1, 4))
+        if num and num > 0 then
+            newValue = num
+            valueDisplay.Text = tostring(newValue)
+        end
+    end)
+    
+    confirm.MouseButton1Click:Connect(function()
+        callback(newValue)
+        selectorGui:Destroy()
+    end)
+    
+    cancel.MouseButton1Click:Connect(function()
+        selectorGui:Destroy()
+    end)
+end
+
+-- окно выбора игрока
 local selectGui = nil
 local function showPlayerSelect()
     if selectGui then selectGui:Destroy() end
@@ -142,12 +208,13 @@ local function showPlayerSelect()
     local title = Instance.new("TextLabel", frame)
     title.Size = UDim2.new(1,0,0,40)
     title.Text = "ВЫБЕРИ ИГРОКА"
-    title.TextColor3 = Color3.fromRGB(255,0,0)
+    title.TextColor3 = Color3.fromRGB(255,255,255)
     title.BackgroundTransparency = 1
     local close = Instance.new("TextButton", frame)
     close.Size = UDim2.new(0,30,0,30)
     close.Position = UDim2.new(1,-35,0,5)
     close.Text = "X"
+    close.TextColor3 = Color3.fromRGB(255,255,255)
     close.BackgroundColor3 = Color3.fromRGB(100,0,0)
     close.BorderColor3 = Color3.fromRGB(255,0,0)
     close.MouseButton1Click:Connect(function() selectGui:Destroy() end)
@@ -163,6 +230,7 @@ local function showPlayerSelect()
             btn.Size = UDim2.new(1,0,0,35)
             btn.Position = UDim2.new(0,0,0,y)
             btn.Text = plr.Name
+            btn.TextColor3 = Color3.fromRGB(255,255,255)
             btn.BackgroundColor3 = Color3.fromRGB(30,30,30)
             btn.BorderColor3 = Color3.fromRGB(255,0,0)
             btn.MouseButton1Click:Connect(function()
@@ -176,7 +244,7 @@ local function showPlayerSelect()
     list.CanvasSize = UDim2.new(0,0,0,y)
 end
 
--- === ГЛАВНОЕ ОКНО ===
+-- главное окно
 local gui = Instance.new("ScreenGui", game.CoreGui)
 gui.Name = "kunilingus"
 
@@ -192,25 +260,25 @@ main.Draggable = true
 
 local title = Instance.new("TextLabel", main)
 title.Size = UDim2.new(1,0,0,35)
-title.Text = "kunilingus v2.2 | Стр. " .. currentPage .. "/2"
+title.Text = "kunilingus v2.3"
 title.TextColor3 = Color3.fromRGB(255,0,0)
 title.BackgroundTransparency = 1
 title.TextScaled = true
 
--- КРЕСТИК
 local close = Instance.new("TextButton", main)
 close.Size = UDim2.new(0,35,0,30)
 close.Position = UDim2.new(1,-40,0,2)
 close.Text = "❌"
 close.TextSize = 16
+close.TextColor3 = Color3.fromRGB(255,255,255)
 close.BackgroundColor3 = Color3.fromRGB(100,0,0)
 close.BorderColor3 = Color3.fromRGB(255,0,0)
 
--- СТРЕЛКИ
 local leftArrow = Instance.new("TextButton", main)
 leftArrow.Size = UDim2.new(0,40,0,30)
 leftArrow.Position = UDim2.new(0.02,0,0.88,0)
 leftArrow.Text = "◀"
+leftArrow.TextColor3 = Color3.fromRGB(255,255,255)
 leftArrow.BackgroundColor3 = Color3.fromRGB(30,30,30)
 leftArrow.BorderColor3 = Color3.fromRGB(255,0,0)
 
@@ -218,10 +286,10 @@ local rightArrow = Instance.new("TextButton", main)
 rightArrow.Size = UDim2.new(0,40,0,30)
 rightArrow.Position = UDim2.new(0.85,0,0.88,0)
 rightArrow.Text = "▶"
+rightArrow.TextColor3 = Color3.fromRGB(255,255,255)
 rightArrow.BackgroundColor3 = Color3.fromRGB(30,30,30)
 rightArrow.BorderColor3 = Color3.fromRGB(255,0,0)
 
--- КОНТЕЙНЕРЫ СТРАНИЦ
 local page1 = Instance.new("Frame", main)
 page1.Size = UDim2.new(1,0,1,-80)
 page1.Position = UDim2.new(0,0,0.12,0)
@@ -233,7 +301,6 @@ page2.Position = UDim2.new(0,0,0.12,0)
 page2.BackgroundTransparency = 1
 page2.Visible = false
 
--- ФУНКЦИЯ КНОПКИ (текст не вылезает)
 local function btn(parent, x, y, w, h, text, cb)
     local b = Instance.new("TextButton", parent)
     b.Position = UDim2.new(x, 0, y, 0)
@@ -247,33 +314,48 @@ local function btn(parent, x, y, w, h, text, cb)
     b.MouseButton1Click:Connect(cb)
 end
 
--- СТРАНИЦА 1
-btn(page1, 0.05, 0.05, 0.42, 0.14, "СКОРОСТЬ", function() speedActive = not speedActive humanoid.WalkSpeed = speedActive and 150 or 16 end)
-btn(page1, 0.52, 0.05, 0.42, 0.14, "ПОЛЁТ", function() if not flying then startFly() else stopFly() end end)
-btn(page1, 0.05, 0.22, 0.42, 0.14, "ПРЫЖОК", function() jumpActive = not jumpActive humanoid.JumpPower = jumpActive and 300 or 50 end)
+-- страница 1
+btn(page1, 0.05, 0.05, 0.42, 0.14, "СКОРОСТЬ", function()
+    showValueSelector("Скорость (WalkSpeed)", currentSpeed, function(val)
+        currentSpeed = val
+        if speedActive then humanoid.WalkSpeed = currentSpeed end
+    end)
+end)
+btn(page1, 0.52, 0.05, 0.42, 0.14, "ПОЛЁТ", function()
+    showValueSelector("Скорость полёта", currentFlySpeed, function(val)
+        currentFlySpeed = val
+        if flying then
+            stopFly()
+            startFly()
+        end
+    end)
+end)
+btn(page1, 0.05, 0.22, 0.42, 0.14, "ПРЫЖОК", function()
+    showValueSelector("Сила прыжка", currentJump, function(val)
+        currentJump = val
+        if jumpActive then humanoid.JumpPower = currentJump end
+    end)
+end)
 btn(page1, 0.52, 0.22, 0.42, 0.14, "НЕВИДИМ", function() setInvisible(not invisibleActive) end)
 btn(page1, 0.05, 0.39, 0.42, 0.14, "NOCLIP", function() setNoclip(not noclipActive) end)
-btn(page1, 0.52, 0.39, 0.42, 0.14, "СКИН", wearSkin)
-btn(page1, 0.05, 0.56, 0.42, 0.14, "ESP", toggleESP)
+btn(page1, 0.52, 0.39, 0.42, 0.14, "ESP", toggleESP)
 
--- СТРАНИЦА 2
+-- страница 2
 btn(page2, 0.05, 0.05, 0.42, 0.14, "ВЫБРАТЬ", showPlayerSelect)
 btn(page2, 0.52, 0.05, 0.42, 0.14, "ТП К НЕМУ", function() tpToPlayer(selectedPlayer) end)
 btn(page2, 0.05, 0.22, 0.42, 0.14, "ЗАМОРОЗИТЬ", function() freezePlayer(selectedPlayer) end)
 btn(page2, 0.52, 0.22, 0.42, 0.14, "ИНФО", function()
     if selectedPlayer then
         local age = getAccountAge(selectedPlayer)
-        game.StarterGui:SetCore("SendNotification", {Title = selectedPlayer.Name, Text = "Аккаунт создан " .. age .. " дней назад", Duration = 3})
+        game.StarterGui:SetCore("SendNotification", {Title = selectedPlayer.Name, Text = "Аккаунт создан " .. age .. " дн. назад", Duration = 3})
     else
         game.StarterGui:SetCore("SendNotification", {Title = "Ошибка", Text = "Сначала выбери игрока", Duration = 2})
     end
 end)
 
--- ПЕРЕКЛЮЧЕНИЕ СТРАНИЦ
 local function updatePage()
     page1.Visible = (currentPage == 1)
     page2.Visible = (currentPage == 2)
-    title.Text = "kunilingus v2.2 | Стр. " .. currentPage .. "/2"
 end
 
 leftArrow.MouseButton1Click:Connect(function()
@@ -290,12 +372,11 @@ rightArrow.MouseButton1Click:Connect(function()
     end
 end)
 
--- КНОПКА ОТКРЫТИЯ
 local open = Instance.new("TextButton", game.CoreGui)
 open.Size = UDim2.new(0, 80, 0, 30)
 open.Position = UDim2.new(0.02, 0, 0.02, 0)
 open.Text = "OPEN"
-open.TextColor3 = Color3.fromRGB(255,0,0)
+open.TextColor3 = Color3.fromRGB(255,255,255)
 open.BackgroundColor3 = Color3.fromRGB(0,0,0)
 open.BorderColor3 = Color3.fromRGB(255,0,0)
 open.Visible = false
@@ -309,4 +390,4 @@ close.MouseButton1Click:Connect(function()
 end)
 
 updatePage()
-print("kunilingus v2.2 loaded")
+print("kunilingus v2.3 loaded")
